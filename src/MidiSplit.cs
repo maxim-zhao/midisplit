@@ -47,7 +47,7 @@ namespace MidiSplit
                 // We add any extra delays to the event
                 if (_pendingDeltaTime > 0)
                 {
-                    midiEvent = midiEvent.Clone()
+                    midiEvent = midiEvent.Clone();
                     midiEvent.DeltaTime += _pendingDeltaTime;
                     _pendingDeltaTime = 0;
                 }
