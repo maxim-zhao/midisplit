@@ -10,14 +10,29 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-
+    
     steps:
     - uses: actions/checkout@v2
     - name: Setup .NET
       uses: actions/setup-dotnet@v1
       with:
         dotnet-version: 5.0.x
-    - name: Restore dependencies
-      run: dotnet restore
     - name: Build
-      run: dotnet build --no-restore
+      working-directory: ./src
+      run: dotnet publish --configuration release --self-contained false --runtime win-x64
+    - name: Zip
+      run: zip midisplit.zip readme.md src/bin/Release/netcoreapp3.1/win-x64/publish/*.exe src/bin/Release/netcoreapp3.1/win-x64/publish/*.dll
+    - name: Create Release
+      uses: ncipollo/release-action@v1.7.3
+      with:
+        allowUpdates: true
+        artifacts: midisplit.zip 
+        name: latest 
+        omitBody: true
+        omitBodyDuringUpdate: true
+        replacesArtifacts: true
+        tag: latest-release
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+
+
