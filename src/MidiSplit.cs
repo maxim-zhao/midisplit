@@ -28,6 +28,9 @@ namespace MidiSplit
                     case "split":
                         Split(args[1]);
                         return;
+                    case "singletrack":
+                        SingleTrack(args[1]);
+                        break;
                     default:
                         throw new Exception($"Invalid verb \"{args[0]}\"");
                 }
@@ -147,7 +150,12 @@ namespace MidiSplit
                 {
                     if (c.Channel != _channelNumber)
                     {
-                        // Ignore it
+                        // Just add the delay
+                        foreach (var writer in _writers)
+                        {
+                            writer.AddDelay(c.DeltaTime);
+                        }
+
                         return;
                     }
 
@@ -255,20 +263,28 @@ namespace MidiSplit
                 x => new ChannelHandler(x));
 
             // Then we parse the file and filter into these handlers
-            foreach (var e in f.GetTrackChunks().SelectMany(chunk => chunk.Events))
+            var merged = new TrackChunk();
+            using (var mergedTimedEvents = merged.ManageTimedEvents())
             {
-                if (e is ChannelEvent channelEvent)
+                foreach (var chunk in f.GetTrackChunks())
                 {
-                    // Pass to the specific channel handler
-                    channels[channelEvent.Channel].Write(e);
+                    Console.WriteLine($"Adding {chunk.Events.Count} events from chunk...");
+                    using var m = chunk.ManageTimedEvents();
+                    mergedTimedEvents.Events.Add(m.Events);
                 }
-                else
+                mergedTimedEvents.SaveChanges();
+                Console.WriteLine($"Total events is now {mergedTimedEvents.Events.Count()}, length = {(TimeSpan)mergedTimedEvents.Events.Last().TimeAs<MetricTimeSpan>(f.GetTempoMap())}");
+            }
+
+            var maxTime = merged.Events.Sum(x => x.DeltaTime);
+            Console.WriteLine($"Total {merged.Events.Count} events, time {maxTime} = {(TimeSpan)TimeConverter.ConvertTo<MetricTimeSpan>(maxTime, f.GetTempoMap())}");
+
+            foreach (var e in merged.Events)
+            {
+                // Pass everything else through to all channels handlers
+                foreach (var channelHandler in channels.Values) 
                 {
-                    // Pass everything else through to all channels handlers
-                    foreach (var channelHandler in channels.Values) 
-                    {
-                        channelHandler.Write(e);
-                    }
+                    channelHandler.Write(e);
                 }
             }
 
@@ -295,56 +311,72 @@ namespace MidiSplit
             Console.WriteLine($"Format: {f.OriginalFormat}");
             Console.WriteLine($"Time division: {f.TimeDivision}");
 
-            var channelTimes = Enumerable.Repeat(0L, 255).ToList();
             foreach (var trackChunk in f.GetTrackChunks())
             {
+                Console.WriteLine("============= Track chunk start =============");
+                var time = 0L;
                 foreach (var e in trackChunk.Events)
                 {
-                    switch (e)
+                    // These all have time
+                    time += e.DeltaTime;
+                    if (e is ChannelEvent c)
                     {
-                        case CopyrightNoticeEvent c:
-                            Console.WriteLine($"CopyrightNotice {c.Text}");
-                            break;
-                        case SequenceTrackNameEvent n:
-                            Console.WriteLine($"SequenceTrackName {n.Text}");
-                            break;
-                        case KeySignatureEvent k:
-                            Console.WriteLine($"KeySignature key={k.Key} scale={k.Scale}");
-                            break;
-                        case SetTempoEvent t:
-                            Console.WriteLine($"SetTempo {t.MicrosecondsPerQuarterNote}us per quarter note");
-                            break;
-                        case ChannelEvent c:
-                            channelTimes[c.Channel] += c.DeltaTime;
-                            Console.Write($"[{c.Channel}] +{c.DeltaTime:D4} [{channelTimes[c.Channel]:D6}] {c.EventType} ");
-                            switch (c)
-                            {
-                                case ProgramChangeEvent p:
-                                    Console.WriteLine($"{p.ProgramNumber} ({(GeneralMidiProgram) (int) p.ProgramNumber})");
-                                    break;
-                                case ControlChangeEvent cc:
-                                    Console.WriteLine($"{cc.GetControlName()}={cc.ControlValue}");
-                                    break;
-                                case NoteOnEvent n:
-                                    Console.WriteLine($"{n.GetNoteName()} {n.NoteNumber}");
-                                    break;
-                                case NoteOffEvent n:
-                                    Console.WriteLine($"{n.GetNoteName()} {n.NoteNumber}");
-                                    break;
-                                case PitchBendEvent b:
-                                    Console.WriteLine($"{b.PitchValue}");
-                                    break;
-                                default:
-                                    Console.WriteLine("######");
-                                    break;
-                            }
-                            break;
-                        default:
-                            Console.WriteLine($"Event {e.EventType} ######");
-                            break;
+                        Console.Write($"+{c.DeltaTime:D4} [{time:D6}] [{c.Channel}] {c.EventType} ");
+                        switch (c)
+                        {
+                            case ProgramChangeEvent p:
+                                Console.WriteLine(
+                                    $"{p.ProgramNumber} ({(GeneralMidiProgram) (int) p.ProgramNumber})");
+                                break;
+                            case ControlChangeEvent cc:
+                                Console.WriteLine($"{cc.GetControlName()}={cc.ControlValue}");
+                                break;
+                            case NoteOnEvent n:
+                                Console.WriteLine($"{n.GetNoteName()} {n.NoteNumber}");
+                                break;
+                            case NoteOffEvent n:
+                                Console.WriteLine($"{n.GetNoteName()} {n.NoteNumber}");
+                                break;
+                            case PitchBendEvent b:
+                                Console.WriteLine($"{b.PitchValue}");
+                                break;
+                            default:
+                                Console.WriteLine(e.ToString());
+                                break;
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"+{e.DeltaTime:D4} [{time:D6}] {e}");
                     }
                 }
             }
+        }
+
+        private static void SingleTrack(string filename)
+        {
+            // We open the file...
+            var f = MidiFile.Read(filename);
+
+            // Then we convert all the events to absolute time and merge them together
+            var merged = new TrackChunk();
+            using (var mergedTimedEvents = merged.ManageTimedEvents())
+            {
+                foreach (var chunk in f.GetTrackChunks())
+                {
+                    using var m = chunk.ManageTimedEvents();
+                    mergedTimedEvents.Events.Add(m.Events);
+                }
+                mergedTimedEvents.SaveChanges();
+            }
+
+            // And save
+            var outFile = new MidiFile {TimeDivision = f.TimeDivision, Chunks = {merged}};
+            outFile.Write(Path.Join(
+                Path.GetDirectoryName(filename),
+                $"{Path.GetFileNameWithoutExtension(filename)}.singletrack.mid"),
+                overwriteFile:true,
+                format:MidiFileFormat.SingleTrack);
         }
 
     }
