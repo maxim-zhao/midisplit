@@ -38,6 +38,7 @@ jobs:
         omitBody: true
         omitBodyDuringUpdate: true
         replacesArtifacts: true
+        tag: latest-release
         token: ${{ secrets.GITHUB_TOKEN }}
 
 
