@@ -17,7 +17,7 @@ namespace MidiSplit
             {
                 if (args.Length != 2)
                 {
-                    throw new Exception("Invalid parameters. Usage: midisplit <split|print> <filename>");
+                    throw new Exception("Invalid parameters. Usage: midisplit <split|print|singletrack> <filename>");
                 }
 
                 switch (args[0].ToLowerInvariant())
